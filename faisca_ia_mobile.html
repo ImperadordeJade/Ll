@@ -1,0 +1,594 @@
+<html lang="pt-BR"><head>
+<script>
+(function() {
+    if (window.__htmlToApkCleartextHooked) return;
+    window.__htmlToApkCleartextHooked = true;
+
+    var PROXY_PREFIX = 'https://appassets.androidplatform.net/__cleartext_proxy__/?url=';
+
+    function toProxyUrl(url) {
+        if (!url) return url;
+        if (typeof url === 'string') {
+            if (url.startsWith('http://')) {
+                return PROXY_PREFIX + encodeURIComponent(url);
+            }
+            return url;
+        }
+        try {
+            var str = url.toString();
+            if (str.startsWith('http://')) {
+                return PROXY_PREFIX + encodeURIComponent(str);
+            }
+        } catch (_) {}
+        return url;
+    }
+
+    function fromProxyUrl(url) {
+        if (!url || typeof url !== 'string') return url;
+        if (url.startsWith(PROXY_PREFIX)) {
+            try {
+                return decodeURIComponent(url.substring(PROXY_PREFIX.length));
+            } catch (_) {}
+        }
+        return url;
+    }
+
+    if (typeof window.fetch === 'function') {
+        var origFetch = window.fetch;
+        window.fetch = function(input, init) {
+            try {
+                if (typeof input === 'string') {
+                    input = toProxyUrl(input);
+                } else if (typeof URL !== 'undefined' && input instanceof URL) {
+                    input = toProxyUrl(input.toString());
+                } else if (input && typeof input.url === 'string' && input.url.startsWith('http://')) {
+                    var newUrl = toProxyUrl(input.url);
+                    input = new Request(newUrl, input);
+                }
+            } catch (_) {}
+            return origFetch.call(this, input, init);
+        };
+    }
+
+    if (typeof window.XMLHttpRequest === 'function') {
+        var origOpen = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function(method, url, async, user, password) {
+            this.__originalUrl = url;
+            var proxied = toProxyUrl(typeof url === 'string' ? url : (url ? url.toString() : url));
+            return origOpen.call(this, method, proxied, async !== false, user, password);
+        };
+    }
+
+    try {
+        var mediaProto = window.HTMLMediaElement && window.HTMLMediaElement.prototype;
+        if (mediaProto) {
+            var mediaSrcDesc = Object.getOwnPropertyDescriptor(mediaProto, 'src');
+            if (mediaSrcDesc && mediaSrcDesc.set) {
+                var origMediaSet = mediaSrcDesc.set;
+                var origMediaGet = mediaSrcDesc.get;
+                Object.defineProperty(mediaProto, 'src', {
+                    get: function() {
+                        return fromProxyUrl(origMediaGet.call(this));
+                    },
+                    set: function(val) {
+                        return origMediaSet.call(this, toProxyUrl(val));
+                    },
+                    configurable: true,
+                    enumerable: true
+                });
+            }
+            var currentSrcDesc = Object.getOwnPropertyDescriptor(mediaProto, 'currentSrc');
+            if (currentSrcDesc && currentSrcDesc.get) {
+                var origCurrentSrcGet = currentSrcDesc.get;
+                Object.defineProperty(mediaProto, 'currentSrc', {
+                    get: function() {
+                        return fromProxyUrl(origCurrentSrcGet.call(this));
+                    },
+                    configurable: true,
+                    enumerable: true
+                });
+            }
+        }
+    } catch (_) {}
+
+    try {
+        var sourceProto = window.HTMLSourceElement && window.HTMLSourceElement.prototype;
+        if (sourceProto) {
+            var sourceSrcDesc = Object.getOwnPropertyDescriptor(sourceProto, 'src');
+            if (sourceSrcDesc && sourceSrcDesc.set) {
+                var origSourceSet = sourceSrcDesc.set;
+                var origSourceGet = sourceSrcDesc.get;
+                Object.defineProperty(sourceProto, 'src', {
+                    get: function() {
+                        return fromProxyUrl(origSourceGet.call(this));
+                    },
+                    set: function(val) {
+                        return origSourceSet.call(this, toProxyUrl(val));
+                    },
+                    configurable: true,
+                    enumerable: true
+                });
+            }
+        }
+    } catch (_) {}
+
+    try {
+        var origSetAttr = Element.prototype.setAttribute;
+        var origGetAttr = Element.prototype.getAttribute;
+        Element.prototype.setAttribute = function(name, val) {
+            if (typeof name === 'string' && name.toLowerCase() === 'src') {
+                var tag = this.tagName ? this.tagName.toLowerCase() : '';
+                if (tag === 'video' || tag === 'audio' || tag === 'source' || tag === 'img' || tag === 'iframe') {
+                    val = toProxyUrl(val);
+                }
+            }
+            return origSetAttr.call(this, name, val);
+        };
+        Element.prototype.getAttribute = function(name) {
+            var val = origGetAttr.call(this, name);
+            if (typeof name === 'string' && name.toLowerCase() === 'src' && val) {
+                return fromProxyUrl(val);
+            }
+            return val;
+        };
+    } catch (_) {}
+
+    function rewriteMediaElement(el) {
+        try {
+            if (!el || !el.getAttribute) return;
+            var rawSrc = el.getAttribute('src');
+            if (rawSrc && rawSrc.startsWith('http://')) {
+                el.src = toProxyUrl(rawSrc);
+            }
+        } catch (_) {}
+    }
+
+    function rewriteExistingTags() {
+        try {
+            var mediaEls = document.querySelectorAll('video, audio, source, img, iframe');
+            for (var i = 0; i < mediaEls.length; i++) {
+                rewriteMediaElement(mediaEls[i]);
+            }
+        } catch (_) {}
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', rewriteExistingTags);
+    } else {
+        rewriteExistingTags();
+    }
+
+    try {
+        if (typeof MutationObserver !== 'undefined') {
+            var observer = new MutationObserver(function(mutations) {
+                for (var m = 0; m < mutations.length; m++) {
+                    var mutation = mutations[m];
+                    if (mutation.type === 'childList') {
+                        for (var a = 0; a < mutation.addedNodes.length; a++) {
+                            var node = mutation.addedNodes[a];
+                            if (node.nodeType === 1) {
+                                var tag = node.tagName ? node.tagName.toLowerCase() : '';
+                                if (tag === 'video' || tag === 'audio' || tag === 'source' || tag === 'img' || tag === 'iframe') {
+                                    rewriteMediaElement(node);
+                                }
+                                if (node.querySelectorAll) {
+                                    var children = node.querySelectorAll('video, audio, source, img, iframe');
+                                    for (var c = 0; c < children.length; c++) {
+                                        rewriteMediaElement(children[c]);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+            observer.observe(document.documentElement || document, { childList: true, subtree: true });
+        }
+    } catch (_) {}
+})();
+(function() {
+    if (window.__htmlToApkDownloadInterceptor) return;
+    window.__htmlToApkDownloadInterceptor = true;
+
+    var blobCache = (typeof Map !== 'undefined') ? new Map() : null;
+
+    if (typeof URL !== 'undefined' && URL.createObjectURL) {
+        var origCreate = URL.createObjectURL;
+        URL.createObjectURL = function(blob) {
+            var url = origCreate.call(URL, blob);
+            if (blobCache && blob instanceof Blob) {
+                try {
+                    blobCache.set(url, blob);
+                    setTimeout(function() {
+                        try { blobCache.delete(url); } catch (_) {}
+                    }, 60000);
+                } catch (_) {}
+            }
+            return url;
+        };
+
+        if (URL.revokeObjectURL) {
+            var origRevoke = URL.revokeObjectURL;
+            URL.revokeObjectURL = function(url) {
+                setTimeout(function() {
+                    try {
+                        origRevoke.call(URL, url);
+                    } catch (_) {}
+                }, 30000);
+            };
+        }
+    }
+
+    function guessFileName(href, name, mimeType) {
+        if (name && typeof name === 'string' && name.trim() && name.trim() !== 'download') {
+            var cleanName = name.trim();
+            if (cleanName.indexOf('.') !== -1) return cleanName;
+            var extFromName = (mimeType && mimeType.indexOf('json') !== -1) ? 'json' : 'bin';
+            return cleanName + '.' + extFromName;
+        }
+        var ext = 'json';
+        if (mimeType) {
+            if (mimeType.indexOf('json') !== -1) ext = 'json';
+            else if (mimeType.indexOf('csv') !== -1) ext = 'csv';
+            else if (mimeType.indexOf('text') !== -1) ext = 'txt';
+            else if (mimeType.indexOf('pdf') !== -1) ext = 'pdf';
+            else if (mimeType.indexOf('zip') !== -1) ext = 'zip';
+            else if (mimeType.indexOf('png') !== -1) ext = 'png';
+            else if (mimeType.indexOf('jpeg') !== -1 || mimeType.indexOf('jpg') !== -1) ext = 'jpg';
+        }
+        return 'export_' + Date.now() + '.' + ext;
+    }
+
+    function handleDownload(href, filename, mimeType) {
+        if (!href || typeof href !== 'string') return;
+        var isBlob = href.startsWith('blob:');
+        var isData = href.startsWith('data:');
+        if (!isBlob && !isData) return;
+
+        var safeName = guessFileName(href, filename, mimeType);
+
+        if (isBlob && blobCache && blobCache.has(href)) {
+            try {
+                var cachedBlob = blobCache.get(href);
+                var actualMime = (cachedBlob && cachedBlob.type) ? cachedBlob.type : (mimeType || 'application/json');
+                var reader = new FileReader();
+                reader.onloadend = function() {
+                    if (reader.result && typeof AndroidAPI !== 'undefined' && AndroidAPI.onBlobDownloaded) {
+                        AndroidAPI.onBlobDownloaded(reader.result, safeName, actualMime);
+                    }
+                };
+                reader.onerror = function() {
+                    if (typeof AndroidAPI !== 'undefined' && AndroidAPI.downloadBlobUrl) {
+                        AndroidAPI.downloadBlobUrl(href, safeName, actualMime);
+                    }
+                };
+                reader.readAsDataURL(cachedBlob);
+                return;
+            } catch (_) {}
+        }
+
+        if (typeof AndroidAPI !== 'undefined') {
+            if (isData && AndroidAPI.downloadDataUri) {
+                AndroidAPI.downloadDataUri(href, safeName, mimeType || 'application/json');
+            } else if (AndroidAPI.downloadBlobUrl) {
+                AndroidAPI.downloadBlobUrl(href, safeName, mimeType || 'application/json');
+            }
+        }
+    }
+
+    document.addEventListener('click', function(e) {
+        var a = e.target && e.target.closest ? e.target.closest('a') : null;
+        if (!a || typeof a.href !== 'string') return;
+        if (a.href.startsWith('blob:') || a.href.startsWith('data:')) {
+            e.preventDefault();
+            e.stopPropagation();
+            var dl = a.getAttribute('download') || a.download || '';
+            handleDownload(a.href, dl, a.type || '');
+        }
+    }, true);
+
+    try {
+        var origClick = HTMLAnchorElement.prototype.click;
+        HTMLAnchorElement.prototype.click = function() {
+            var href = this.href;
+            if (typeof href === 'string' && (href.startsWith('blob:') || href.startsWith('data:'))) {
+                var dl = this.getAttribute('download') || this.download || '';
+                handleDownload(href, dl, this.type || '');
+                return;
+            }
+            return origClick.apply(this, arguments);
+        };
+    } catch (_) {}
+
+    try {
+        var origDispatch = HTMLAnchorElement.prototype.dispatchEvent;
+        HTMLAnchorElement.prototype.dispatchEvent = function(event) {
+            if (event && (event.type === 'click' || event === 'click')) {
+                var href = this.href;
+                if (typeof href === 'string' && (href.startsWith('blob:') || href.startsWith('data:'))) {
+                    var dl = this.getAttribute('download') || this.download || '';
+                    handleDownload(href, dl, this.type || '');
+                    return false;
+                }
+            }
+            return origDispatch.apply(this, arguments);
+        };
+    } catch (_) {}
+
+    try {
+        var origOpen = window.open;
+        window.open = function(url) {
+            if (typeof url === 'string' && (url.startsWith('blob:') || url.startsWith('data:'))) {
+                handleDownload(url, 'download', '');
+                return null;
+            }
+            return origOpen.apply(this, arguments);
+        };
+    } catch (_) {}
+
+    if (!window.showSaveFilePicker) {
+        window.showSaveFilePicker = async function(options) {
+            var suggestedName = (options && options.suggestedName) ? options.suggestedName : 'export.json';
+            var mime = 'application/json';
+            if (options && options.types && options.types[0] && options.types[0].accept) {
+                var keys = Object.keys(options.types[0].accept);
+                if (keys.length > 0) mime = keys[0];
+            }
+            return {
+                name: suggestedName,
+                createWritable: async function() {
+                    var chunks = [];
+                    return {
+                        write: async function(data) {
+                            if (data instanceof Blob) {
+                                chunks.push(data);
+                            } else if (typeof data === 'string') {
+                                chunks.push(new Blob([data], { type: mime }));
+                            } else if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) {
+                                chunks.push(new Blob([data], { type: mime }));
+                            }
+                        },
+                        close: async function() {
+                            var finalBlob = new Blob(chunks, { type: mime });
+                            var reader = new FileReader();
+                            reader.onloadend = function() {
+                                if (reader.result && typeof AndroidAPI !== 'undefined' && AndroidAPI.onBlobDownloaded) {
+                                    AndroidAPI.onBlobDownloaded(reader.result, suggestedName, mime);
+                                }
+                            };
+                            reader.readAsDataURL(finalBlob);
+                        },
+                        abort: async function() {
+                            chunks = [];
+                        }
+                    };
+                }
+            };
+        };
+    }
+})();
+</script>
+
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Faísca IA Mobile</title>
+  <meta name="theme-color" content="#212121">
+  <style>
+    :root {
+      --bg-color: #212121;
+      --panel-color: #171717;
+      --text-color: #ececf1;
+      --text-secondary: #8e8ea0;
+      --accent-color: #10a37f;
+      --border-color: #2f2f2f;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: var(--bg-color); color: var(--text-color); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+    #app-root { display: flex; flex-direction: column; height: 100%; width: 100%; }
+    .app-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background-color: var(--panel-color); border-bottom: 1px solid var(--border-color); font-size: 16px; font-weight: 600; }
+    .content-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; position: relative; }
+    .view { display: none; flex: 1; flex-direction: column; overflow: hidden; height: 100%; }
+    .view.active { display: flex; }
+    .message-container { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+    .message { display: flex; gap: 12px; max-width: 85%; line-height: 1.5; font-size: 15px; word-break: break-word; }
+    .message.user { align-self: flex-end; background-color: #2f2f2f; padding: 10px 14px; border-radius: 12px; }
+    .message.ai { align-self: flex-start; color: var(--text-color); }
+    .input-area { padding: 12px 16px; background-color: var(--bg-color); border-top: 1px solid var(--border-color); display: flex; align-items: center; gap: 8px; }
+    .input-wrapper { flex: 1; display: flex; align-items: center; background-color: var(--panel-color); border: 1px solid var(--border-color); border-radius: 24px; padding: 6px 12px; }
+    input { flex: 1; border: none; background: transparent; color: var(--text-color); font-size: 15px; outline: none; padding: 6px; }
+    button#send-btn { background-color: var(--accent-color); color: #fff; border: none; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; font-weight: bold; }
+    .admin-form { padding: 20px; display: flex; flex-direction: column; gap: 12px; text-align: left; }
+    .admin-form label { font-size: 14px; color: var(--text-secondary); }
+    .admin-form input { background: var(--panel-color); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; color: #fff; width: 100%; }
+    .admin-btn { background-color: var(--accent-color); color: #fff; border: none; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; margin-top: 8px; }
+    .download-btn { background-color: #2f2f2f; color: var(--text-color); border: 1px solid var(--border-color); padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; margin-top: 8px; width: 100%; }
+    .bottom-nav { display: flex; justify-content: space-around; align-items: center; background-color: var(--panel-color); border-top: 1px solid var(--border-color); padding: 8px 0; height: 60px; }
+    .nav-btn { background: none; border: none; color: var(--text-secondary); display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 11px; cursor: pointer; flex: 1; }
+    .nav-btn.active { color: var(--accent-color); }
+    .nav-btn svg { width: 22px; height: 22px; fill: currentColor; }
+    .clear-btn { background: none; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; }
+  </style>
+</head>
+<body>
+  <div id="app-root">
+    <header class="app-header">
+      <span id="header-title">Configurações</span>
+      <button class="clear-btn" id="clear-chat-btn" title="Limpar Histórico">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"></path></svg>
+      </button>
+    </header>
+    
+    <main class="content-area">
+      <section id="chat-view" class="view">
+        <div class="message-container" id="messages"><div class="message user">Oi</div><div class="message ai">Incorrect API key provided: AQ.Ab8RN*****************************************CFrg. You can find your API key at https://platform.openai.com/account/api-keys.</div></div>
+        <div class="input-area">
+          <div class="input-wrapper">
+            <input type="text" id="user-input" placeholder="Mensagem para o Faísca IA...">
+            <button id="send-btn">↑</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="projects-view" class="view" style="padding: 20px; text-align: center;">
+        <h2>Projetos</h2>
+        <p style="color: var(--text-secondary); margin-top: 10px;">Gerencie seus aplicativos gerados aqui.</p>
+        <button class="download-btn" id="download-app-btn-projects">Baixar este App (HTML)</button>
+      </section>
+
+      <section id="admin-view" class="view active" style="overflow-y: auto;">
+        <div class="admin-form">
+          <h2>Configurações</h2>
+          <label for="api-key-input">Chave da API OpenAI:</label>
+          <input type="password" id="api-key-input" placeholder="sk-...">
+          <button class="admin-btn" id="save-key-btn">Salvar Chave</button>
+          <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 20px 0;">
+          <h2>Exportar Aplicativo</h2>
+          <button class="download-btn" id="download-app-btn-admin">Baixar Código Fonte em HTML</button>
+        </div>
+      </section>
+    </main>
+
+    <nav class="bottom-nav">
+      <button class="nav-btn" data-view="chat">
+        <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0-2-.9-2-2V4c0-1.1-.9-2-2-2z"></path></svg>
+        Chat
+      </button>
+      <button class="nav-btn" data-view="projects">
+        <svg viewBox="0 0 24 24"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"></path></svg>
+        Projetos
+      </button>
+      <button class="nav-btn active" data-view="admin">
+        <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"></path></svg>
+        Admin
+      </button>
+    </nav>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        let API_KEY = localStorage.getItem('openai_api_key');
+        const apiKeyInput = document.getElementById('api-key-input');
+        if (API_KEY) apiKeyInput.value = API_KEY;
+
+        document.getElementById('save-key-btn').addEventListener('click', () => {
+            const key = apiKeyInput.value.trim();
+            if (key) {
+                localStorage.setItem('openai_api_key', key);
+                API_KEY = key;
+                alert("Chave salva com sucesso!");
+            } else {
+                alert("Insira uma chave válida.");
+            }
+        });
+
+        const sendBtn = document.getElementById('send-btn');
+        const userInput = document.getElementById('user-input');
+        const messages = document.getElementById('messages');
+        const navButtons = document.querySelectorAll('.nav-btn');
+        const views = document.querySelectorAll('.view');
+        const headerTitle = document.getElementById('header-title');
+
+        navButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                navButtons.forEach(b => b.classList.remove('active'));
+                views.forEach(v => v.classList.remove('active'));
+                btn.classList.add('active');
+                const viewName = btn.getAttribute('data-view');
+                document.getElementById(`${viewName}-view`).classList.add('active');
+                if(viewName === 'chat') headerTitle.textContent = 'Faísca IA';
+                if(viewName === 'projects') headerTitle.textContent = 'Projetos';
+                if(viewName === 'admin') headerTitle.textContent = 'Configurações';
+            });
+        });
+
+        function addMessage(text, sender) {
+            const messageDiv = document.createElement('div');
+            messageDiv.classList.add('message', sender);
+            messageDiv.textContent = text;
+            messages.appendChild(messageDiv);
+            messages.scrollTop = messages.scrollHeight;
+        }
+
+        function saveHistory() {
+            const history = messages.innerHTML;
+            localStorage.setItem('faisca_chat_history', history);
+        }
+
+        function loadHistory() {
+            const history = localStorage.getItem('faisca_chat_history');
+            if (history) {
+                messages.innerHTML = history;
+                messages.scrollTop = messages.scrollHeight;
+            }
+        }
+
+        document.getElementById('clear-chat-btn').addEventListener('click', () => {
+            if (confirm("Tem certeza que deseja limpar a conversa?")) {
+                messages.innerHTML = '';
+                localStorage.removeItem('faisca_chat_history');
+            }
+        });
+
+        loadHistory();
+
+        async function callAI(prompt) {
+            const currentKey = localStorage.getItem('openai_api_key');
+            if (!currentKey) {
+                addMessage("Chave da OpenAI não encontrada. Vá em Configurações para adicioná-la.", 'ai');
+                return;
+            }
+
+            addMessage("Pensando...", 'ai');
+            const aiMsgIndex = messages.children.length - 1;
+
+            try {
+                const response = await fetch('https://api.openai.com/v1/chat/completions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + currentKey },
+                    body: JSON.stringify({
+                        model: "gpt-4o-mini",
+                        messages: [{ role: "user", content: prompt }]
+                    })
+                });
+
+                const data = await response.json();
+                const reply = data.choices?.[0]?.message?.content || data.error?.message || "Erro.";
+                messages.children[aiMsgIndex].textContent = reply;
+                saveHistory();
+            } catch (error) {
+                messages.children[aiMsgIndex].textContent = "Erro de conexão.";
+            }
+        }
+
+        function handleSend() {
+            const text = userInput.value.trim();
+            if (text !== '') {
+                addMessage(text, 'user');
+                saveHistory();
+                userInput.value = '';
+                callAI(text);
+            }
+        }
+
+        sendBtn.addEventListener('click', handleSend);
+        userInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') handleSend(); });
+
+        function downloadApp() {
+            const htmlContent = document.documentElement.outerHTML;
+            const blob = new Blob([htmlContent], { type: 'text/html' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'faisca_ia_mobile.html';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        document.getElementById('download-app-btn-projects').addEventListener('click', downloadApp);
+        document.getElementById('download-app-btn-admin').addEventListener('click', downloadApp);
+    });
+  </script>
+
+</body></html>
